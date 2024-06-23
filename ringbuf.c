@@ -1,7 +1,7 @@
 /*
  * MIT License
  *
- * Copyright (c) 2023-2024 csy (siyun.chen@foxmail.com)
+ * Copyright (c) 2023-2024 csy(siyun.chen@foxmail.com)
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -140,71 +140,67 @@ bool ringbuf_isFull(ringbuf_t *obj)
 }
 
 /**
- * @brief  向环形数组写入数据
+ * @brief  向环形数组写入数据，支持覆盖已有数据的强制写入模式
+ * 
+ * 此函数将指定的数据写入环形数组。如果选择了强制写入模式并且缓冲区剩余空间不足，
+ * 则会覆盖缓冲区中的旧数据。如果尝试写入的数据量超过了缓冲区的大小，函数将不执行任何操作并返回0。
+ * 
+ * @note   写入不会超过缓冲区的大小。当强制写入且实际写入量大于未使用的缓冲区空间时，
+ *         会更新前端索引以覆盖旧数据，使used字段等于缓冲区大小。
  * @param  obj:    环形数组对象
  * @param  pdata:  待写入数据的缓冲区指针
- * @param  length: 待写入数据的长度，如果大于剩余空间将丢弃剩余的数据
+ * @param  length: 待写入数据的长度
+ * @param  force:  是否强制写入
  * @return 实际写入长度
  */
-uint16_t ringbuf_write(ringbuf_t *obj, uint8_t *pdata, uint16_t length)
+uint16_t ringbuf_write(ringbuf_t *obj, uint8_t *pdata, uint16_t length, bool force)
 {
     if (obj == NULL || pdata == NULL || length == 0 || obj->size == 0)
         return 0;
 
-    uint16_t len = 0;
-    uint16_t space = obj->size - obj->used;
-    for (; len < length && len < space; len++)
-    {
-        obj->arr[obj->rear] = pdata[len];
-        obj->rear = (obj->rear + 1) % obj->size;
-        obj->used++;
-    }
-
-    return len;
-}
-
-/**
- * @brief  强制向环形数组写入数据
- * @param  obj    环形数组对象
- * @param  pdata  待写入数据的缓冲区指针
- * @param  length 待写入数据的长度，如果剩余空间不足将覆盖原有数据
- * @return 实际写入长度
- */
-uint16_t ringbuf_writeForce(ringbuf_t *obj, uint8_t *pdata, uint16_t length)
-{
-    if (obj == NULL || pdata == NULL || length == 0 || obj->size == 0)
+    uint16_t space = force ? obj->size : obj->size - obj->used;
+    if (length > space)
         return 0;
 
-    for (uint16_t len = 0; len < length; len++)
+    uint16_t written = length < space ? length : space;
+    for (uint16_t i = 0; i < written; ++i)
     {
-        obj->arr[obj->rear] = pdata[len];
+        obj->arr[obj->rear] = pdata[i];
         obj->rear = (obj->rear + 1) % obj->size;
-        obj->used++;
-
-        if (obj->used > obj->size)
-        {
-            obj->front = (obj->front + 1) % obj->size;
-            obj->used = obj->size;
-        }
     }
 
-    return length;
+    if (force && written > obj->size - obj->used)
+    {
+        uint16_t cover_len = written - (obj->size - obj->used);
+        obj->front = (obj->front + cover_len) % obj->size;
+        obj->used = obj->size;
+    }
+    else
+    {
+        obj->used += written;
+    }
+
+    return written;
 }
 
 /**
  * @brief  从环形数组读出数据
  * @note   读出数据的同时会从环形数组中删除数据。
- * @param  obj    环形数组对象
- * @param  pdata  接收数据的缓冲区指针
- * @param  length 要读取的数据长度，如果length大于已有数据数量将只读出已有数据数量
+ * @param  obj        环形数组对象
+ * @param  pdata      接收数据的缓冲区指针
+ * @param  length     要读取的数据长度
+ * @param  strictRead 是否采用严格读取模式。当设置为true时，如果请求读取的数据长度超过缓冲区中实际数据长度，则不进行读取
  * @return 实际读取长度
  */
-uint16_t ringbuf_read(ringbuf_t *obj, uint8_t *pdata, uint16_t length)
+uint16_t ringbuf_read(ringbuf_t *obj, uint8_t *pdata, uint16_t length, bool strictRead)
 {
     if (obj == NULL || pdata == NULL || length == 0 || obj->used == 0)
         return 0;
 
-    uint16_t readLength = (length <= obj->used) ? length : obj->used;
+    if (strictRead && length > obj->used)
+        return 0;
+
+    uint16_t readLength = length > obj->used ? obj->used : length;
 
     for (uint16_t i = 0; i < readLength; i++)
     {
@@ -258,11 +254,11 @@ uint16_t ringbuf_remove(ringbuf_t *obj, int length)
  * @note   索引是相对读指针的索引，不是环形数组内存的绝对索引。注意，仅能修改已写入的数据，不是写入数据。
  * @param  obj    环形数组对象
  * @param  index  相对读指针的起始索引
- * @param  length 要修改数据的长度
  * @param  pdata  要修改数据的指针
+ * @param  length 要修改数据的长度
  * @return 修改操作是否成功
  */
-bool ringbuf_modify(ringbuf_t *obj, uint16_t index, uint16_t length, uint8_t *pdata)
+bool ringbuf_modify(ringbuf_t *obj, uint16_t index, uint8_t *pdata, uint16_t length)
 {
     if (obj == NULL || pdata == NULL || index >= obj->used || length > (obj->used - index) || obj->size == 0)
         return false;
@@ -276,15 +272,15 @@ bool ringbuf_modify(ringbuf_t *obj, uint16_t index, uint16_t length, uint8_t *pd
 }
 
 /**
- * @brief  窥视环形数组中指定索引范围内已存在的数据。仅读取数据，不会移除数据。
+ * @brief  预览环形数组中指定索引范围内已存在的数据。仅读取数据，不会移除数据。
  * @note   索引是相对读指针的索引，不是环形数组内存的绝对索引。注意，仅能读取已写入的数据且只读不删。
  * @param  obj    环形数组对象
  * @param  index  相对读指针的起始索引
- * @param  length 要读取的数据长度
  * @param  pdata  用于存储读取数据的缓冲区指针
+ * @param  length 要读取的数据长度
  * @return 读取操作是否成功
  */
-bool ringbuf_peek(ringbuf_t *obj, uint16_t index, uint16_t length, uint8_t *pdata)
+bool ringbuf_peek(ringbuf_t *obj, uint16_t index, uint8_t *pdata, uint16_t length)
 {
     if (obj == NULL || pdata == NULL || index >= obj->used || length > (obj->used - index) || obj->size == 0)
         return false;
